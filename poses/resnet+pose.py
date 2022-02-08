@@ -8,7 +8,7 @@ from tensorflow.keras.applications.resnet50 import ResNet50
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import matplotlib.pyplot as plt
-from tensorflow.keras.layers import Input,Dense, GlobalAveragePooling2D,Flatten
+from tensorflow.keras.layers import Input,Dense, GlobalAveragePooling2D,Flatten,Reshape
 from tensorflow.keras.models import Model
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import OneHotEncoder
@@ -18,19 +18,16 @@ num_classes =3
 
 class DataGenerator(tf.keras.utils.Sequence):
     
-    def __init__(self, list_pose,labels, batch_size= BATCH_SIZE, dim=(32,32,32), n_channels= 1,n_classes=3, shuffle= True):
+    def __init__(self, list_pose, labeldf, batch_size= BATCH_SIZE, dim=(32,32,32), n_channels= 1,n_classes=3, shuffle= True):
         self.dim = dim
         self.batch_size = batch_size
         self.list_pose = list_pose
         self.n_classes = n_classes
         self.n_channels = n_channels
         self.shuffle = shuffle
-        self.labels =labels
+        self.labeldf =labeldf
         self.on_epoch_end()
         self.n = 0
-        
-    def NormalizeData(self,data):
-        return (data - np.min(data)) / (np.max(data) - np.min(data))
     
     def __len__(self):
         
@@ -42,7 +39,7 @@ class DataGenerator(tf.keras.utils.Sequence):
 
         i,p,l = self.__data_generation(list_pose_temp)
         #print("here", i.shape,p.shape,l.shape)
-        return [i,p], l #image pose label
+        return [i, p], l #image pose label
 
     def on_epoch_end(self):
         self.indexes = np.arange(len(self.list_pose))
@@ -59,26 +56,42 @@ class DataGenerator(tf.keras.utils.Sequence):
     def __data_generation(self, list_pose_temp):   
         X = np.empty((self.batch_size, 66,1))
         Z = np.empty((self.batch_size, 135,100, 3))
-        l = np.empty((self.batch_size,3))
+        l = np.empty((self.batch_size, self.n_classes ))
         
         for i, each in enumerate(list_pose_temp):          
-            #print(i,each)
+            
             X[i,] =np.reshape(np.load('C:/Users/IDU/OneDrive - GTÜ/Desktop/TEZ/poses/NPdata/'+ each ,allow_pickle=True),(66,1))
             image = Image.open('C:/Users/IDU/Desktop/dataset/'+ each.split(".")[0] +".jpg")
-            image = image.convert('RGB')
-            image =np.array(image.resize((100, 135)))
-            #print(image.shape)
-            Z[i,] = image
-            #print("z shape ",Z[i,].shape)
-            l[i,]= self.labels[i]
-        # print("outed ")
-        return Z,X , tf.keras.utils.to_categorical(l, num_classes=self.n_classes)
+            image = np.array((image.convert('RGB')).resize((100, 135)))
+          
+            Z[i,] = image / 255.0
+            label = self.labeldf['category'][self.labeldf['productid']== int(each.split(".")[0] )].values[0]
+            if label =='Takım':
+                lab = [0,1,0]
+            elif label =='Tesettür Elbise':
+                lab = [1,0,0]
+            else:
+                lab = [0,0,1]
+                
+                
+                
+                
+            l[i,]= lab
+        
+        
+        return Z,X,l
+    
+
 
 params = {'dim': (32,32,32),
           'batch_size': BATCH_SIZE,
           'n_classes': 3,
           'n_channels': 1,""
-          'shuffle': False}
+          'shuffle': True}
+
+df = pd.read_csv(r"C:\Users\IDU\OneDrive - GTÜ\Desktop\TEZ\MODANISA\prod_details.csv")
+
+
 
 poselist = np.load("C:/Users/IDU/OneDrive - GTÜ/Desktop/TEZ/poses/poselist.npy", allow_pickle=True )        
 
@@ -87,14 +100,12 @@ labels = labels.reshape(-1, 1)
 enc = OneHotEncoder(handle_unknown='ignore').fit(labels)
 labels = enc.transform(labels).toarray()
 
-# print("label ", labels.shape)
-# label_encoder = LabelEncoder()
-# labels = label_encoder.fit_transform(labels)
+#print("debug",df['category'][df['productid']== int(8010707 )])
 
 # Generators
-pose_generator = DataGenerator(poselist,labels, **params)
+pose_generator = DataGenerator(poselist[:25000],df, **params)
+val_generator = DataGenerator(poselist[25001:],df, **params)
 
-#print("pose ",tf.shape(pose_generator))
 input_shape=(135,100,3)
 
 pose_shape = (66,1)
@@ -103,33 +114,30 @@ model = ResNet50( include_top= False , input_shape= input_shape , classes= num_c
 
 
 x = GlobalAveragePooling2D()(model.output)
-
+x = Dense(256, activation ='relu')(x)
 x = Dense(66, activation ='relu')(x)
 x= tf.expand_dims(x, axis= -1)
 
 
 pose_input = tf.keras.layers.Input(pose_shape)
 
-concat = tf.concat([x, pose_input], axis=0 )
-
+concat = tf.concat([x, pose_input], axis=1 )
 concat = Flatten()(concat)
-x = Dense(64, activation='relu')(concat)
-x = Dense(32, activation= 'softmax')(x)
 
-y = Dense(num_classes,activation= 'softmax')(x)
+#x = Dense(64, activation='relu')(concat)
+x = tf.keras.layers.Dense(32, activation= 'relu')(concat)
+
+y = tf.keras.layers.Dense(3)(x)
 
 
 model = tf.keras.models.Model(inputs= [model.input, pose_input] , outputs= y)
 
-#print("debug ",np.array(pose_generator.__getitem__(0)[0]).shape)
+model.compile( optimizer= "adam", loss='categorical_crossentropy', metrics= ['accuracy'] )
 
-model.compile( optimizer= "adam", loss="categorical_crossentropy", metrics= ['accuracy'] )
-
-print(model.summary())
-history= model.fit(pose_generator,
+#print(model.summary())
+history= model.fit(pose_generator, validation_data=val_generator,
           batch_size=BATCH_SIZE,
-          epochs= 100)
-
+          epochs= 4)
 
 plt.plot(history.history['accuracy'])
 plt.plot(history.history['val_accuracy'])
@@ -150,6 +158,7 @@ plt.show()
 plt.savefig('model_loss.png')
 
 model.save('model_poseResnet.h5')
+
 
 
 
