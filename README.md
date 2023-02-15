@@ -7,3 +7,5 @@ General idea can be found in the publication "Using Additional Information to Im
 Classification of Clothing Item"
 
 https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=9873734
+
+I am sorry I am a messy coder :'/ 
